@@ -93,11 +93,15 @@ Put that in `~/.pi/agent/pi-usage.json`, then `/usage on`.
 ## Development
 
 ```bash
+npm install --ignore-scripts
+npm run typecheck    # tsc --noEmit, strict
+npm run lint         # oxlint
+
 pi -e .              # load the package from source for one run
 pi --list-models -e .
 ```
 
-`index.ts` holds the whole package. There is no build step: Pi loads TypeScript directly.
+`index.ts` holds the whole package. There is no build step: Pi loads TypeScript directly, so the published tarball ships source.
 
 ## License
 

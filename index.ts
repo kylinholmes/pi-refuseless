@@ -8,7 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER_ID = "refuseless";
 const BASE_URL = "https://api.refuseless.com/v1";
@@ -28,8 +28,6 @@ type RemoteModel = {
   };
 };
 
-type PiModel = Record<string, unknown>;
-
 function resolveApiKey(): string | undefined {
   if (process.env.REFUSELESS_API_KEY) return process.env.REFUSELESS_API_KEY;
   try {
@@ -40,66 +38,82 @@ function resolveApiKey(): string | undefined {
   }
 }
 
+/** `reasoning` is required only on the chat variant, which makes it the discriminator. */
+type ChatModel = Extract<ProviderModelConfig, { reasoning: boolean }>;
+
 const titleCase = (id: string) =>
   id
     .split(/[-_]/)
-    .map((word) => (/^[a-z]/.test(word) ? word[0].toUpperCase() + word.slice(1) : word))
+    .map((word) => (/^[a-z]/.test(word) ? word.charAt(0).toUpperCase() + word.slice(1) : word))
     .join(" ");
 
-/**
- * Maps upstream metadata onto a pi model. `thinkingLevelMap` is derived from the
- * advertised effort levels, because the provider rejects unsupported ones.
- */
-function toPiModel(remote: RemoteModel): PiModel {
-  const efforts = remote.reasoning_efforts ?? [];
+/** Discounted rates win over `regular`, which is the un-discounted list price. */
+function buildCost(remote: RemoteModel): ProviderModelConfig["cost"] {
   const price = remote.pricing ?? {};
   const per = (value?: number, regular?: number) => value ?? regular ?? 0;
+  return {
+    input: per(price.input_per_m, price.regular?.input_per_m),
+    output: per(price.output_per_m, price.regular?.output_per_m),
+    cacheRead: per(price.cached_input_per_m, price.regular?.cached_input_per_m),
+    cacheWrite: 0,
+  };
+}
+
+/**
+ * Builds the level map from the advertised effort levels: the provider rejects
+ * anything outside them, so unsupported levels become null and pi clamps to the
+ * nearest supported one.
+ */
+function buildThinkingMap(
+  remote: RemoteModel,
+): ChatModel["thinkingLevelMap"] | undefined {
+  const efforts = remote.reasoning_efforts ?? [];
+  if (efforts.length === 0) return undefined;
+
   const published = (level: string) => (efforts.includes(level) ? level : null);
   const fallback =
     remote.reasoning_default && remote.reasoning_default !== "off"
       ? remote.reasoning_default
-      : (published("low") ?? efforts[0]);
+      : (published("low") ?? efforts[0] ?? "low");
 
-  const model: PiModel = {
-    id: remote.id,
-    name: titleCase(remote.id),
-    reasoning: efforts.length > 0,
-    input: remote.vision ? ["text", "image"] : ["text"],
-    cost: {
-      input: per(price.input_per_m, price.regular?.input_per_m),
-      output: per(price.output_per_m, price.regular?.output_per_m),
-      cacheRead: per(price.cached_input_per_m, price.regular?.cached_input_per_m),
-      cacheWrite: 0,
-    },
-    contextWindow: remote.context_length ?? 131072,
-    maxTokens: 65536,
+  return {
+    off: published("off"),
+    minimal: null,
+    low: published("low") ?? fallback,
+    medium: fallback,
+    high: published("high") ?? fallback,
+    max: published("max") ?? published("high") ?? fallback,
   };
-
-  if (efforts.length > 0) {
-    model.thinkingLevelMap = {
-      off: published("off"),
-      minimal: null,
-      low: published("low") ?? fallback,
-      medium: fallback,
-      high: published("high") ?? fallback,
-      max: published("max") ?? published("high") ?? fallback,
-    };
-  }
-  return model;
 }
 
-async function fetchCatalog(apiKey: string, signal?: AbortSignal): Promise<PiModel[]> {
+function toPiModel(remote: RemoteModel): ChatModel {
+  const thinkingLevelMap = buildThinkingMap(remote);
+  return {
+    id: remote.id,
+    name: titleCase(remote.id),
+    reasoning: thinkingLevelMap !== undefined,
+    input: remote.vision ? ["text", "image"] : ["text"],
+    cost: buildCost(remote),
+    contextWindow: remote.context_length ?? 131072,
+    maxTokens: 65536,
+    ...(thinkingLevelMap === undefined ? {} : { thinkingLevelMap }),
+  };
+}
+
+async function fetchCatalog(apiKey: string, signal?: AbortSignal): Promise<ChatModel[]> {
   const res = await fetch(`${BASE_URL}/models`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
     signal: signal ?? AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = ((await res.json()) as { data?: RemoteModel[] }).data ?? [];
-  return data.map(toPiModel).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return data.map(toPiModel).sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export default async function (pi: ExtensionAPI) {
-  let catalog: PiModel[] = [];
+  // Handed to refreshModels as-is instead of rethrowing: offline startup and a
+  // failed refresh both keep whatever the previous fetch produced.
+  let catalog: ChatModel[] = [];
   const startupKey = resolveApiKey();
 
   if (startupKey) {

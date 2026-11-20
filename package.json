@@ -19,8 +19,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-ai": "*"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -38,5 +38,16 @@
   "homepage": "https://github.com/kylinholmes/pi-refuseless#readme",
   "bugs": {
     "url": "https://github.com/kylinholmes/pi-refuseless/issues"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.5.2",
+    "@types/node": "^26.6.6",
+    "oxlint": "^1.94.0",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "oxlint index.ts",
+    "prepublishOnly": "npm run typecheck && npm run lint"
   }
 }
