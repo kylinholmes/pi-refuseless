@@ -1,0 +1,42 @@
+{
+  "name": "pi-refuseless",
+  "version": "0.1.0",
+  "description": "Refuseless provider for the Pi coding agent: uncensored DeepSeek, GLM, Kimi and MiniMax models with a live model catalog.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-provider",
+    "refuseless",
+    "deepseek",
+    "glm",
+    "kimi",
+    "minimax"
+  ],
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "author": "kylinholmes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kylinholmes/pi-refuseless.git"
+  },
+  "homepage": "https://github.com/kylinholmes/pi-refuseless#readme",
+  "bugs": {
+    "url": "https://github.com/kylinholmes/pi-refuseless/issues"
+  }
+}
