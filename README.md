@@ -2,7 +2,7 @@
 
 Refuseless provider for the [Pi coding agent](https://pi.dev): DeepSeek V4.1, GLM 5.3, Kimi K3.1 and MiniMax M3.1, including abliterated variants, over an OpenAI-compatible API.
 
-The model list is fetched from `GET /v1/models` at startup and on every model refresh, so new models and price changes show up without a package update. Nothing is cached to disk.
+Startup never waits on the network: a catalog snapshot ships with the package, so `/model` is populated immediately and offline. Pi refreshes providers in the background afterwards, swapping in `GET /v1/models` and persisting it for the next start, so new models and price changes still show up without a package update.
 
 ## Install
 
@@ -86,7 +86,7 @@ Put that in `~/.pi/agent/pi-usage.json`, then `/usage on`.
 ## Caveats
 
 - Refuseless is a third-party gateway, not a first-party API vendor. It is not part of Pi's built-in catalog, and Pi's own `/models` page remains the authoritative list of supported providers.
-- The catalog is read from the live API, so a network failure at startup leaves `/model` empty for that run.
+- A network failure never empties `/model`: the bundled snapshot, or the last persisted catalog, stays in use. A refresh is skipped for four hours after a successful check unless it is forced.
 - Model ids, prices and the `/v1/models` shape are the gateway's own; this package makes no promises about them.
 - Abliterated models have no upstream price guarantee and can regress after a model update.
 

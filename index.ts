@@ -1,18 +1,24 @@
 /**
  * pi-refuseless — registers the Refuseless provider (https://refuseless.com).
  *
- * The model list is fetched from `GET /v1/models` at startup and on every model
- * refresh, so newly added or repriced models appear without a package update.
+ * Startup never touches the network: a bundled catalog is registered
+ * synchronously, so model selection works immediately and offline. Pi refreshes
+ * providers in the background afterwards, and `refreshModels` then swaps in
+ * `GET /v1/models` and persists it for the next offline start.
  *
  * Auth: `REFUSELESS_API_KEY`, or the key already stored by `/login refuseless`.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ModelsStoreEntry } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER_ID = "refuseless";
 const BASE_URL = "https://api.refuseless.com/v1";
 const AGENT_DIR = process.env.PI_AGENT_DIR ?? join(process.env.USERPROFILE ?? "", ".pi", "agent");
+
+/** Reuse the persisted catalog for this long; `force` refreshes bypass the window. */
+const REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 type RemoteModel = {
   id: string;
@@ -100,6 +106,105 @@ function toPiModel(remote: RemoteModel): ChatModel {
   };
 }
 
+/**
+ * `GET /v1/models` as of this release. Registered synchronously so `pi` starts
+ * without waiting on the network; a successful refresh replaces and persists it.
+ */
+const DEFAULT_CATALOG: ChatModel[] = [
+  {
+    id: "deepseek-v4.1-flash-abliterated",
+    name: "Deepseek V4.1 Flash Abliterated",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.12, output: 0.45, cacheRead: 0.019, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: "off", minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+  {
+    id: "deepseek-v4.1-flash-abliterated-fast",
+    name: "Deepseek V4.1 Flash Abliterated Fast",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.12, output: 0.45, cacheRead: 0.025, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: "off", minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+  {
+    id: "deepseek-v4.1-flash-fast",
+    name: "Deepseek V4.1 Flash Fast",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.01, output: 0.08, cacheRead: 0.002, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: "off", minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+  {
+    id: "glm-5.3-abliterated",
+    name: "Glm 5.3 Abliterated",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 1, output: 2, cacheRead: 0.15, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+  {
+    id: "glm-5.3-flash-abliterated",
+    name: "Glm 5.3 Flash Abliterated",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.12, output: 0.5, cacheRead: 0.025, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+  {
+    id: "kimi-k3.1-pro",
+    name: "Kimi K3.1 Pro",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.25, output: 2.5, cacheRead: 0.15, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+  {
+    id: "kimi-k3.1-pro-abliterated",
+    name: "Kimi K3.1 Pro Abliterated",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 1.5, output: 3, cacheRead: 0.15, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+  {
+    id: "minimax-m3.1-flash",
+    name: "Minimax M3.1 Flash",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.02, output: 0.08, cacheRead: 0.002, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "low", high: "high", max: "max" },
+  },
+];
+
+/**
+ * Drops the config-only typing before persisting: pi stores catalogs as
+ * `AnyModel[]` and re-validates on read, so the chat fields carried here are
+ * exactly what it expects back.
+ */
+function toStoreModels(models: ChatModel[]): ModelsStoreEntry["models"] {
+  // SAFETY: every entry is a fully formed chat model — `toPiModel` always sets
+  // `input`, `cost`, `contextWindow`, and `maxTokens`, the fields `AnyModel`
+  // requires; pi adds `type` back when it rehydrates the stored catalog.
+  return models as unknown as ModelsStoreEntry["models"];
+}
+
 async function fetchCatalog(apiKey: string, signal?: AbortSignal): Promise<ChatModel[]> {
   const res = await fetch(`${BASE_URL}/models`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
@@ -110,19 +215,10 @@ async function fetchCatalog(apiKey: string, signal?: AbortSignal): Promise<ChatM
   return data.map(toPiModel).sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export default async function (pi: ExtensionAPI) {
-  // Handed to refreshModels as-is instead of rethrowing: offline startup and a
-  // failed refresh both keep whatever the previous fetch produced.
-  let catalog: ChatModel[] = [];
-  const startupKey = resolveApiKey();
-
-  if (startupKey) {
-    try {
-      catalog = await fetchCatalog(startupKey);
-    } catch (error) {
-      console.error(`[refuseless] model catalog fetch failed: ${(error as Error).message}`);
-    }
-  }
+export default function (pi: ExtensionAPI) {
+  // Pi refreshes providers after startup, so this list is replaced in the
+  // background rather than blocking the factory on a network round trip.
+  let catalog: ChatModel[] = DEFAULT_CATALOG;
 
   pi.registerProvider(PROVIDER_ID, {
     name: "Refuseless",
@@ -131,12 +227,32 @@ export default async function (pi: ExtensionAPI) {
     apiKey: "$REFUSELESS_API_KEY",
     models: catalog,
     async refreshModels(ctx) {
+      // Phase one runs offline to restore the persisted catalog; adopting it
+      // here keeps later phases and the returned list in sync.
+      const stored = ctx.stored?.models as ChatModel[] | undefined;
+      if (stored && stored.length > 0) catalog = stored;
+
+      if (!ctx.allowNetwork || ctx.signal.aborted) return catalog;
+
       const credential = ctx.credential as { key?: string; accessToken?: string } | undefined;
-      const key = credential?.key ?? credential?.accessToken ?? startupKey;
-      if (!ctx.allowNetwork || !key) return catalog;
+      const key = credential?.key ?? credential?.accessToken ?? resolveApiKey();
+      if (!key) return catalog;
+
+      const checkedAt = ctx.stored?.checkedAt;
+      if (!ctx.force && checkedAt !== undefined && Date.now() - checkedAt < REFRESH_INTERVAL_MS) {
+        return catalog;
+      }
+
       try {
-        catalog = await fetchCatalog(key, ctx.signal);
+        const fresh = await fetchCatalog(key, ctx.signal);
+        if (ctx.signal.aborted || fresh.length === 0) return catalog;
+        catalog = fresh;
+        await ctx.publish({
+          persist: { models: toStoreModels(fresh), checkedAt: Date.now() },
+        });
       } catch (error) {
+        // Keep the bundled or persisted catalog so a failed refresh (or an
+        // offline start) still leaves /model populated.
         console.error(`[refuseless] model catalog refresh failed: ${(error as Error).message}`);
       }
       return catalog;
