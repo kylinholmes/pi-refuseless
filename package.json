@@ -1,6 +1,6 @@
 {
   "name": "pi-refuseless",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Refuseless provider for the Pi coding agent: uncensored DeepSeek, GLM, Kimi and MiniMax models with a live model catalog.",
   "keywords": [
     "pi-package",
